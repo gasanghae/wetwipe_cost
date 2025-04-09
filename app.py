@@ -149,6 +149,8 @@ if submitted:
             df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
             df.to_csv(file, index=False)
         st.success("견적이 저장되었습니다!")
+        st.session_state.restore_data = row
+        st.experimental_rerun()
 
         # 저장된 견적 표시 + 수정/삭제
         if os.path.exists("견적_기록.csv"):
