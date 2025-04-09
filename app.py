@@ -1,15 +1,19 @@
-
 # Streamlit 기반 물티슈 원가계산 웹 앱
 import streamlit as st
 
-def calculate_wetwipe_cost(width_mm, height_mm, gsm, exchange_rate, tariff_rate, quantity_per_unit=120, margin_rate=0.10):
+def calculate_wetwipe_cost(width_mm, height_mm, gsm, exchange_rate, percent_applied, quantity_per_unit=120, margin_rate=0.10):
     area_m2 = (width_mm / 1000) * (height_mm / 1000)
-    usd_price = 1.46  # 원단 기준 가격 (USD)
-    unit_price_per_gsm = usd_price * exchange_rate * (1 + tariff_rate)
+    usd_price_per_kg = 1.46  # 1kg당 USD 기준 원단 가격
+    applied_usd_price = usd_price_per_kg * percent_applied  # 관세 포함 비율 적용 (예: 1.2)
+    unit_price_per_g = applied_usd_price * exchange_rate / 1000  # g당 원화 가격
+    gsm_price = unit_price_per_g * gsm  # 평량당 가격
     loss_rate_fabric = 0.05
-    applied_unit_price = unit_price_per_gsm * (1 + loss_rate_fabric)
-    fabric_cost_per_sheet = area_m2 * gsm * applied_unit_price
+    applied_unit_price = gsm_price * (1 + loss_rate_fabric)
+    fabric_cost_per_sheet = area_m2 * applied_unit_price
     fabric_cost_total = fabric_cost_per_sheet * quantity_per_unit
+
+    # 원단 단가만 따로 반환
+    fabric_unit_cost = round(fabric_cost_total, 2)
 
     # 원부자재 항목들 (회사명 기반 항목 포함)
     submaterials = {
@@ -31,7 +35,7 @@ def calculate_wetwipe_cost(width_mm, height_mm, gsm, exchange_rate, tariff_rate,
         "4대보험+퇴직금": 4.17,
         "제조경비": 21.26,
         "이자비용": 17.01,
-        "창고료": 5.00  # 예시 값
+        "창고료": 5.00
     }
 
     materials_total = fabric_cost_total + sum(submaterials.values())
@@ -42,7 +46,7 @@ def calculate_wetwipe_cost(width_mm, height_mm, gsm, exchange_rate, tariff_rate,
     final_price = round(total_cost + margin, -1)
 
     cost_summary = {
-        "Sateri(원단)": round(fabric_cost_total, 2),
+        "Sateri(원단)": fabric_unit_cost,
         **submaterials,
         "-- 원부자재 소계": round(materials_total, 2),
         **processing_costs,
@@ -52,7 +56,7 @@ def calculate_wetwipe_cost(width_mm, height_mm, gsm, exchange_rate, tariff_rate,
         "제안가(판매가)": final_price
     }
 
-    return cost_summary
+    return cost_summary, round(applied_unit_price, 4)
 
 # Streamlit UI
 st.set_page_config(page_title="물티슈 원가계산기", layout="centered")
@@ -73,14 +77,14 @@ with st.form("calc_form"):
         exchange_rate = st.number_input("환율 (₩/$)", value=1500)
     with col2:
         height = st.number_input("세로 길이 (mm)", value=195)
-        tariff_percent = st.number_input("관세율 (%)", value=8)
+        percent_applied = st.number_input("관세 포함 비율 (%)", value=120) / 100
         margin_rate = st.slider("마진율 (%)", 0, 50, 10) / 100
 
     submitted = st.form_submit_button("계산하기")
 
 if submitted:
-    tariff_rate = tariff_percent / 100
-    result = calculate_wetwipe_cost(width, height, gsm, exchange_rate, tariff_rate, margin_rate=margin_rate)
+    result, unit_price = calculate_wetwipe_cost(width, height, gsm, exchange_rate, percent_applied, margin_rate=margin_rate)
     st.subheader("💡 계산 결과")
+    st.write(f"🧮 **원단 단가 (1㎡당 g/㎡ 적용, 로스 포함)**: {unit_price} 원")
     for k, v in result.items():
         st.write(f"**{k}**: {v} 원")
