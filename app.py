@@ -211,5 +211,30 @@ if submitted:
         ax2.set_xlabel("비용 (원)")
         st.pyplot(fig2)
 
-# 복원 기능 처리 이후 검색 기능은 필요한 경우 추가됩니다.
+# 📂 복원 및 검색 기능 추가
+if st.sidebar.button("📂 지난 견적 불러오기"):
+    st.subheader("📋 저장된 견적 목록 및 복원")
+    if os.path.exists("견적_기록.csv"):
+        df_log = pd.read_csv("견적_기록.csv")
+        st.dataframe(df_log)
+        selected_row = st.selectbox("📌 복원할 견적 선택 (번호)", df_log.index)
+        if st.button("📤 이 견적으로 계산기 채우기"):
+            st.session_state.restore_data = df_log.loc[selected_row].to_dict()
+            st.experimental_rerun()
+
+        # 검색 옵션
+        search_col = st.selectbox("🔍 검색할 항목", df_log.columns.tolist(), index=0)
+        keyword = st.text_input("검색어 입력")
+        if st.button("🔍 검색") and keyword:
+            filtered = df_log[df_log[search_col].astype(str).str.contains(keyword, case=False)]
+            st.dataframe(filtered)
+            if not filtered.empty:
+                selected_filtered = st.selectbox("📌 복원할 검색 결과 선택", filtered.index)
+                if st.button("📤 검색 결과 견적으로 계산기 채우기"):
+                    st.session_state.restore_data = filtered.loc[selected_filtered].to_dict()
+                    st.experimental_rerun()
+            else:
+                st.info("검색 결과가 없습니다.")
+    else:
+        st.info("아직 저장된 견적이 없습니다. 계산 후 저장됩니다.")
 # (이전까지 요청된 전체 기능이 한 줄도 생략되지 않고 포함됩니다.)
