@@ -141,13 +141,27 @@ if submitted:
             "총원가": result["총원가"],
             "제안가": result["제안가(판매가)"]
         }
-        file = "견적_기록.csv"
-        if not os.path.exists(file):
-            pd.DataFrame([row]).to_csv(file, index=False)
-        else:
-            df = pd.read_csv(file)
-            df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
-            df.to_csv(file, index=False)
+        # 🔄 Google Sheets에 저장하기
+import gspread
+from google.oauth2.service_account import Credentials
+
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
+client = gspread.authorize(creds)
+sheet = client.open("Wetwipe Estimates").sheet1
+
+sheet.append_row([
+    estimate_name,
+    now,
+    f"{width}x{height}",
+    gsm,
+    quantity,
+    exchange_rate,
+    percent_applied,
+    margin_rate,
+    result["총원가"],
+    result["제안가(판매가)"]
+])
         st.success("견적이 저장되었습니다!")
         st.session_state.restore_data = row
         st.experimental_rerun()

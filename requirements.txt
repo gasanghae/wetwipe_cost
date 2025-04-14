@@ -3,3 +3,5 @@ matplotlib
 pandas
 xlsxwriter
 reportlab
+gspread
+google-auth
