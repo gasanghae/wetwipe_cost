@@ -7,10 +7,13 @@ import os
 import csv
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
+import datetime
+import gspread
+from google.oauth2.service_account import Credentials
 
-# 전체 계산 함수 정의 포함
+# 한글 깨짐 방지용 폰트 설정
 import matplotlib
-matplotlib.rcParams['font.family'] = ['Malgun Gothic', 'AppleGothic', 'NanumGothic', 'DejaVu Sans']  # 한글 깨짐 방지용 기본 글꼴
+matplotlib.rcParams['font.family'] = ['Malgun Gothic', 'AppleGothic', 'NanumGothic', 'DejaVu Sans']
 
 def calculate_wetwipe_cost(width_mm, height_mm, gsm, exchange_rate, percent_applied, quantity_per_unit, margin_rate=0.10,
                              labor_cost=23.42, insurance_cost=4.17, management_cost=21.26, interest_cost=17.01, storage_cost=5.00, logistics_cost=28.57):
@@ -67,8 +70,6 @@ def calculate_wetwipe_cost(width_mm, height_mm, gsm, exchange_rate, percent_appl
     }
 
     return cost_summary, fabric_unit_price_per_sheet, submaterials, processing_costs, final_price
-
-import datetime
 
 st.set_page_config(page_title="물티슈 원가계산기", layout="centered")
 st.title("📦 물티슈 원가계산기")
@@ -128,13 +129,11 @@ if submitted:
         st.write(f"**{k}**: {v} 원")
 
     if st.button("💾 견적 저장하기"):
-    import gspread
-    from google.oauth2.service_account import Credentials
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
+        client = gspread.authorize(creds)
+        sheet = client.open("Wetwipe Estimates").sheet1
 
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
-    client = gspread.authorize(creds)
-    sheet = client.open("Wetwipe Estimates").sheet1
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         row = {
             "견적명": estimate_name,
@@ -148,116 +147,89 @@ if submitted:
             "총원가": result["총원가"],
             "제안가": result["제안가(판매가)"]
         }
-        # 🔄 Google Sheets에 저장하기
-import gspread
-from google.oauth2.service_account import Credentials
 
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
-client = gspread.authorize(creds)
-sheet = client.open("Wetwipe Estimates").sheet1
+        sheet.append_row([
+            estimate_name,
+            now,
+            f"{width}x{height}",
+            gsm,
+            quantity,
+            exchange_rate,
+            percent_applied,
+            margin_rate,
+            result["총원가"],
+            result["제안가(판매가)"]
+        ])
 
-sheet.append_row([
-    estimate_name,
-    now,
-    f"{width}x{height}",
-    gsm,
-    quantity,
-    exchange_rate,
-    percent_applied,
-    margin_rate,
-    result["총원가"],
-    result["제안가(판매가)"]
-])
         st.success("견적이 저장되었습니다!")
         st.session_state.restore_data = row
         st.experimental_rerun()
 
-        # 저장된 견적 표시 + 수정/삭제
-        if os.path.exists("견적_기록.csv"):
-            df_log = pd.read_csv("견적_기록.csv")
-            st.subheader("📂 저장된 견적 목록")
-            st.dataframe(df_log)
-            selected_idx = st.selectbox("✏️ 편집/삭제할 견적 선택 (번호)", df_log.index)
-            new_name = st.text_input("✏️ 새 견적명", value=str(df_log.loc[selected_idx, "견적명"]), key="rename")
-            if st.button("💾 이름 수정"):
-                df_log.loc[selected_idx, "견적명"] = new_name
-                df_log.to_csv("견적_기록.csv", index=False)
-                st.success("견적명이 수정되었습니다.")
-                st.experimental_rerun()
-            if st.button("🗑 선택한 견적 삭제"):
-                df_log = df_log.drop(index=selected_idx)
-                df_log.to_csv("견적_기록.csv", index=False)
-                st.warning("견적이 삭제되었습니다.")
-                st.experimental_rerun()
+    # PDF 저장
+    pdf_buffer = BytesIO()
+    c = canvas.Canvas(pdf_buffer, pagesize=A4)
+    c.setFont("Helvetica", 12)
+    c.drawString(50, 800, "📄 물티슈 원가계산 결과")
+    y = 780
+    for k, v in result.items():
+        c.drawString(50, y, f"{k}: {v} 원")
+        y -= 18
+        if y < 50:
+            c.showPage()
+            c.setFont("Helvetica", 12)
+            y = 800
+    c.save()
+    st.download_button("📄 PDF로 다운로드", data=pdf_buffer.getvalue(), file_name="wetwipe_cost.pdf")
 
-        # PDF 저장
-        pdf_buffer = BytesIO()
-        c = canvas.Canvas(pdf_buffer, pagesize=A4)
-        c.setFont("Helvetica", 12)
-        c.drawString(50, 800, "📄 물티슈 원가계산 결과")
-        y = 780
-        for k, v in result.items():
-            c.drawString(50, y, f"{k}: {v} 원")
-            y -= 18
-            if y < 50:
-                c.showPage()
-                c.setFont("Helvetica", 12)
-                y = 800
-        c.save()
-        st.download_button("📄 PDF로 다운로드", data=pdf_buffer.getvalue(), file_name="wetwipe_cost.pdf")
+    # Excel 저장
+    df_result = pd.DataFrame(result.items(), columns=["항목", "금액 (원)"])
+    excel_buffer = BytesIO()
+    with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
+        df_result.to_excel(writer, index=False, sheet_name="견적서")
+    st.download_button("📥 Excel로 다운로드", data=excel_buffer.getvalue(), file_name="wetwipe_cost.xlsx")
 
-        # Excel 저장
-        df_result = pd.DataFrame(result.items(), columns=["항목", "금액 (원)"])
-        excel_buffer = BytesIO()
-        with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
-            df_result.to_excel(writer, index=False, sheet_name="견적서")
-        st.download_button("📥 Excel로 다운로드", data=excel_buffer.getvalue(), file_name="wetwipe_cost.xlsx")
+    # 시각화
+    st.subheader("📊 원가 구성 시각화")
+    group_labels = ['원단', '원부자재', '임가공비']
+    group_values = [result['Sateri(원단) 총합'], sum(submaterials.values()), sum(processing_costs.values())]
+    fig1, ax1 = plt.subplots()
+    ax1.pie(group_values, labels=group_labels, autopct='%1.1f%%', startangle=90)
+    ax1.axis('equal')
+    st.pyplot(fig1)
 
-        # 시각화
-        st.subheader("📊 원가 구성 시각화")
-        group_labels = ['원단', '원부자재', '임가공비']
-        group_values = [result['Sateri(원단) 총합'], sum(submaterials.values()), sum(processing_costs.values())]
-        fig1, ax1 = plt.subplots()
-        ax1.pie(group_values, labels=group_labels, autopct='%1.1f%%', startangle=90)
-        ax1.axis('equal')
-        st.pyplot(fig1)
+    st.subheader("📊 항목별 바 차트")
+    bar_data = {
+        "항목": list(submaterials.keys()) + list(processing_costs.keys()),
+        "비용": list(submaterials.values()) + list(processing_costs.values())
+    }
+    df_bar = pd.DataFrame(bar_data)
+    fig2, ax2 = plt.subplots(figsize=(8, 4))
+    ax2.barh(df_bar["항목"], df_bar["비용"], color="skyblue")
+    ax2.set_xlabel("비용 (원)")
+    st.pyplot(fig2)
 
-        st.subheader("📊 항목별 바 차트")
-        bar_data = {
-            "항목": list(submaterials.keys()) + list(processing_costs.keys()),
-            "비용": list(submaterials.values()) + list(processing_costs.values())
-        }
-        df_bar = pd.DataFrame(bar_data)
-        fig2, ax2 = plt.subplots(figsize=(8, 4))
-        ax2.barh(df_bar["항목"], df_bar["비용"], color="skyblue")
-        ax2.set_xlabel("비용 (원)")
-        st.pyplot(fig2)
-
-# 📂 복원 및 검색 기능 추가
+# 사이드바 복원 기능
 if st.sidebar.button("📂 지난 견적 불러오기"):
     st.subheader("📋 저장된 견적 목록 및 복원")
-    if os.path.exists("견적_기록.csv"):
-        df_log = pd.read_csv("견적_기록.csv")
-        st.dataframe(df_log)
-        selected_row = st.selectbox("📌 복원할 견적 선택 (번호)", df_log.index)
-        if st.button("📤 이 견적으로 계산기 채우기"):
-            st.session_state.restore_data = df_log.loc[selected_row].to_dict()
-            st.experimental_rerun()
-
-        # 검색 옵션
-        search_col = st.selectbox("🔍 검색할 항목", df_log.columns.tolist(), index=0)
-        keyword = st.text_input("검색어 입력")
-        if st.button("🔍 검색") and keyword:
-            filtered = df_log[df_log[search_col].astype(str).str.contains(keyword, case=False)]
-            st.dataframe(filtered)
-            if not filtered.empty:
-                selected_filtered = st.selectbox("📌 복원할 검색 결과 선택", filtered.index)
-                if st.button("📤 검색 결과 견적으로 계산기 채우기"):
-                    st.session_state.restore_data = filtered.loc[selected_filtered].to_dict()
-                    st.experimental_rerun()
-            else:
-                st.info("검색 결과가 없습니다.")
-    else:
-        st.info("아직 저장된 견적이 없습니다. 계산 후 저장됩니다.")
-# (이전까지 요청된 전체 기능이 한 줄도 생략되지 않고 포함됩니다.)
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
+    client = gspread.authorize(creds)
+    sheet = client.open("Wetwipe Estimates").sheet1
+    df_log = pd.DataFrame(sheet.get_all_records())
+    st.dataframe(df_log)
+    selected_row = st.selectbox("📌 복원할 견적 선택 (번호)", df_log.index)
+    if st.button("📤 이 견적으로 계산기 채우기"):
+        st.session_state.restore_data = df_log.loc[selected_row].to_dict()
+        st.experimental_rerun()
+    search_col = st.selectbox("🔍 검색할 항목", df_log.columns.tolist(), index=0)
+    keyword = st.text_input("검색어 입력")
+    if st.button("🔍 검색") and keyword:
+        filtered = df_log[df_log[search_col].astype(str).str.contains(keyword, case=False)]
+        st.dataframe(filtered)
+        if not filtered.empty:
+            selected_filtered = st.selectbox("📌 복원할 검색 결과 선택", filtered.index)
+            if st.button("📤 검색 결과 견적으로 계산기 채우기"):
+                st.session_state.restore_data = filtered.loc[selected_filtered].to_dict()
+                st.experimental_rerun()
+        else:
+            st.info("검색 결과가 없습니다.")
