@@ -128,6 +128,13 @@ if submitted:
         st.write(f"**{k}**: {v} 원")
 
     if st.button("💾 견적 저장하기"):
+    import gspread
+    from google.oauth2.service_account import Credentials
+
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
+    client = gspread.authorize(creds)
+    sheet = client.open("Wetwipe Estimates").sheet1
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         row = {
             "견적명": estimate_name,
