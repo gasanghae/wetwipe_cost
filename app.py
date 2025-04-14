@@ -128,42 +128,33 @@ if submitted:
     for k, v in result.items():
         st.write(f"**{k}**: {v} 원")
 
-    if st.button("💾 견적 저장하기"):
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
-        client = gspread.authorize(creds)
-        sheet = client.open("Wetwipe Estimates").worksheet("Sheet1")
+        # 💾 계산과 동시에 자동 저장
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
+    client = gspread.authorize(creds)
+    sheet = client.open("Wetwipe Estimates").worksheet("Sheet1")
 
-        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        row = {
-            "견적명": estimate_name,
-            "날짜": now,
-            "규격": f"{width}x{height}",
-            "평량": gsm,
-            "매수": quantity,
-            "환율": exchange_rate,
-            "관세비율": percent_applied,
-            "마진율": margin_rate,
-            "총원가": result["총원가"],
-            "제안가": result["제안가(판매가)"]
-        }
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    row = {
+        "견적명": estimate_name,
+        "날짜": now,
+        "규격": f"{width}x{height}",
+        "평량": gsm,
+        "매수": quantity,
+        "환율": exchange_rate,
+        "관세비율": percent_applied,
+        "마진율": margin_rate,
+        "총원가": result["총원가"],
+        "제안가": result["제안가(판매가)"]
+    }
 
-        sheet.append_row([
-            estimate_name,
-            now,
-            f"{width}x{height}",
-            gsm,
-            quantity,
-            exchange_rate,
-            percent_applied,
-            margin_rate,
-            result["총원가"],
-            result["제안가(판매가)"]
-        ])
+    sheet.append_row([
+        row["견적명"], row["날짜"], row["규격"], row["평량"], row["매수"],
+        row["환율"], row["관세비율"], row["마진율"], row["총원가"], row["제안가"]
+    ])
 
-        st.success("견적이 저장되었습니다!")
-        st.session_state.restore_data = row
-        st.experimental_rerun()
+    st.success("견적이 Google Sheets에 자동 저장되었습니다!")
+    st.session_state.restore_data = row
 
     # PDF 저장
     pdf_buffer = BytesIO()
