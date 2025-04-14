@@ -16,9 +16,8 @@ import matplotlib
 matplotlib.rcParams['font.family'] = ['Malgun Gothic', 'AppleGothic', 'NanumGothic', 'DejaVu Sans']
 
 def calculate_wetwipe_cost(width_mm, height_mm, gsm, exchange_rate, percent_applied, quantity_per_unit, margin_rate=0.10,
-                             labor_cost=23.42, insurance_cost=4.17, management_cost=21.26, interest_cost=17.01, storage_cost=5.00, logistics_cost=28.57):
+                             labor_cost=23.42, insurance_cost=4.17, management_cost=21.26, interest_cost=17.01, storage_cost=5.00, logistics_cost=28.57, usd_price_per_kg=1.46):
     area_m2 = (width_mm / 1000) * (height_mm / 1000)
-    usd_price_per_kg = 1.46
     applied_usd_price = usd_price_per_kg * percent_applied
     unit_price_per_g = applied_usd_price * exchange_rate / 1000
     gsm_price = unit_price_per_g * gsm
@@ -88,6 +87,9 @@ else:
 
 with st.form("calc_form"):
     st.subheader("📥 기본 입력값")
+    estimate_name = st.text_input("견적명", value="")
+
+    submitted = st.form_submit_button("📊 계산하기")
     col1, col2 = st.columns(2)
     with col1:
         width = st.number_input("가로 길이 (mm)", value=width)
@@ -98,45 +100,31 @@ with st.form("calc_form"):
         height = st.number_input("세로 길이 (mm)", value=height)
         percent_applied = st.number_input("관세 포함 비율 (%)", value=percent_applied * 100) / 100
         margin_rate = st.slider("마진율 (%)", 0, 50, int(margin_rate * 100)) / 100
-
-    st.subheader("⚙️ 임가공비 입력")
-    labor_cost = st.number_input("노무비", value=23.42)
-    insurance_cost = st.number_input("4대보험+퇴직금", value=4.17)
-    management_cost = st.number_input("제조경비", value=21.26)
-    interest_cost = st.number_input("이자비용", value=17.01)
-    storage_cost = st.number_input("창고료", value=5.00)
-    logistics_cost = st.number_input("물류비", value=28.57)
-
-    st.subheader("💾 저장 정보 입력")
-    estimate_name = st.text_input("견적명", value="")
-    submitted = st.form_submit_button("계산하기")
+        usd_price_per_kg = st.number_input("원단 가격 ($/kg)", value=1.46)
 
 if submitted:
     result, unit_price, submaterials, processing_costs, final_price = calculate_wetwipe_cost(
         width, height, gsm, exchange_rate, percent_applied, quantity,
         margin_rate=margin_rate,
-        labor_cost=labor_cost,
-        insurance_cost=insurance_cost,
-        management_cost=management_cost,
-        interest_cost=interest_cost,
-        storage_cost=storage_cost,
-        logistics_cost=logistics_cost
+        labor_cost=23.42,
+        insurance_cost=4.17,
+        management_cost=21.26,
+        interest_cost=17.01,
+        storage_cost=5.00,
+        logistics_cost=28.57,
+        usd_price_per_kg=usd_price_per_kg
     )
 
-    st.subheader("💡 계산 결과")
-    st.write(f"🧮 **원단 단가 (1장당, 로스 적용가)**: {unit_price} 원")
-    for k, v in result.items():
-        st.write(f"**{k}**: {v} 원")
-
-        # 💾 계산과 동시에 자동 저장
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
     client = gspread.authorize(creds)
     sheet = client.open("Wetwipe Estimates").worksheet("Sheet1")
+    if not sheet.row_values(1):
+        sheet.insert_row(["견적명", "날짜", "규격", "평량", "매수", "환율", "관세비율", "마진율", "총원가", "제안가"], 1)
 
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     row = {
-        "견적명": estimate_name,
+        "견적명": estimate_name if estimate_name else "자동저장견적",
         "날짜": now,
         "규격": f"{width}x{height}",
         "평량": gsm,
@@ -154,7 +142,10 @@ if submitted:
     ])
 
     st.success("견적이 Google Sheets에 자동 저장되었습니다!")
-    st.session_state.restore_data = row
+    st.subheader("💡 계산 결과")
+    st.write(f"🧮 **원단 단가 (1장당, 로스 적용가)**: {unit_price} 원")
+    for k, v in result.items():
+        st.write(f"**{k}**: {v} 원")
 
     # PDF 저장
     pdf_buffer = BytesIO()
@@ -170,14 +161,16 @@ if submitted:
             c.setFont("Helvetica", 12)
             y = 800
     c.save()
-    st.download_button("📄 PDF로 다운로드", data=pdf_buffer.getvalue(), file_name="wetwipe_cost.pdf")
 
     # Excel 저장
     df_result = pd.DataFrame(result.items(), columns=["항목", "금액 (원)"])
     excel_buffer = BytesIO()
     with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
         df_result.to_excel(writer, index=False, sheet_name="견적서")
+
+    st.download_button("📄 PDF로 다운로드", data=pdf_buffer.getvalue(), file_name="wetwipe_cost.pdf")
     st.download_button("📥 Excel로 다운로드", data=excel_buffer.getvalue(), file_name="wetwipe_cost.xlsx")
+    st.session_state.restore_data = row
 
     # 시각화
     st.subheader("📊 원가 구성 시각화")
