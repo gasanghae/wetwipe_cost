@@ -19,7 +19,7 @@ def calculate_wetwipe_cost(width_mm, height_mm, gsm, exchange_rate, percent_appl
                              labor_cost=23.42, insurance_cost=4.17, management_cost=21.26, interest_cost=17.01, storage_cost=5.00, logistics_cost=28.57, usd_price_per_kg=1.46,
                              submaterials=None, processing_costs=None, other_costs=None, corporate_profit=100):
     area_m2 = (width_mm / 1000) * (height_mm / 1000)
-    applied_usd_price = usd_price_per_kg * percent_applied
+    applied_usd_price = usd_price_per_kg * (1 + percent_applied / 100)  # 백분율을 소수로 변환
     unit_price_per_g = applied_usd_price * exchange_rate / 1000
     gsm_price = unit_price_per_g * gsm
     loss_rate_fabric = 0.05
@@ -31,7 +31,7 @@ def calculate_wetwipe_cost(width_mm, height_mm, gsm, exchange_rate, percent_appl
     fabric_unit_cost = round(fabric_cost_total, 2)
     
     # 기초가격 계산
-    base_price = usd_price_per_kg * exchange_rate * percent_applied
+    base_price = usd_price_per_kg * exchange_rate * (1 + percent_applied / 100)  # 백분율을 소수로 변환
 
     # 기본 submaterials 값 설정
     if submaterials is None:
@@ -94,60 +94,210 @@ def calculate_wetwipe_cost(width_mm, height_mm, gsm, exchange_rate, percent_appl
 st.set_page_config(page_title="물티슈 원가계산기", layout="centered")
 st.title("📦 물티슈 원가계산기")
 
-if 'restore_data' in st.session_state:
-    restore = st.session_state.restore_data
-    width = int(restore.get("규격", "150x195").split("x")[0])
-    height = int(restore.get("규격", "150x195").split("x")[1])
-    gsm = int(restore.get("평량", 40))
-    quantity = int(restore.get("매수", 100))
-    exchange_rate = float(restore.get("환율", 1500))
-    percent_applied = float(restore.get("관세비율", 1.2))
-    margin_rate = float(restore.get("마진율", 0.1))
-else:
-    width, height, gsm, quantity, exchange_rate, percent_applied, margin_rate = 150, 195, 40, 120, 1500, 1.2, 0.1
+# Google Sheets 연결 설정
+def get_google_sheet():
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
+    client = gspread.authorize(creds)
+    return client.open("Wetwipe Estimates").sheet1
+
+# 견적 저장 함수
+def save_estimate(data):
+    sheet = get_google_sheet()
+    headers = [
+        "견적명", "규격", "평량", "매수", "환율", "관세비율", "총원가", "제안가",
+        "원단 가격", "기초가격", "정제수", "명진 메인", "명진 소듐", "명진 인산",
+        "SPC팩(파우치)", "영신피엔엘(캡스티커)", "나우텍(캡)", "영신피엔엘(이너스티커)",
+        "지피엠(박스)", "물류비", "노무비", "4대보험+퇴직금", "제조경비", "이자비용",
+        "창고료", "기타비용1_이름", "기타비용2_이름", "기타비용3_이름",
+        "기타비용1", "기타비용2", "기타비용3", "마진율", "기업이윤"
+    ]
+    
+    # 헤더가 없으면 추가
+    if not sheet.row_values(1):
+        sheet.insert_row(headers, 1)
+    
+    # 데이터를 리스트로 변환
+    row_data = [data.get(header, "") for header in headers]
+    sheet.append_row(row_data)
+
+# 견적 불러오기 함수
+def load_estimate(row_index):
+    sheet = get_google_sheet()
+    headers = [
+        "견적명", "규격", "평량", "매수", "환율", "관세비율", "총원가", "제안가",
+        "원단 가격", "기초가격", "정제수", "명진 메인", "명진 소듐", "명진 인산",
+        "SPC팩(파우치)", "영신피엔엘(캡스티커)", "나우텍(캡)", "영신피엔엘(이너스티커)",
+        "지피엠(박스)", "물류비", "노무비", "4대보험+퇴직금", "제조경비", "이자비용",
+        "창고료", "기타비용1_이름", "기타비용2_이름", "기타비용3_이름",
+        "기타비용1", "기타비용2", "기타비용3", "마진율", "기업이윤"
+    ]
+    
+    # 헤더가 없으면 추가
+    if not sheet.row_values(1):
+        sheet.insert_row(headers, 1)
+    
+    row_data = sheet.row_values(row_index + 2)  # +2는 헤더와 1-based 인덱스 때문
+    
+    if not row_data:
+        return None
+        
+    # 데이터를 딕셔너리로 변환
+    data = dict(zip(headers, row_data))
+    
+    # 숫자 데이터 변환
+    numeric_fields = ["평량", "매수", "환율", "관세비율", "총원가", "제안가", "원단 가격", "기초가격",
+                     "정제수", "명진 메인", "명진 소듐", "명진 인산", "SPC팩(파우치)", "영신피엔엘(캡스티커)",
+                     "나우텍(캡)", "영신피엔엘(이너스티커)", "지피엠(박스)", "물류비", "노무비",
+                     "4대보험+퇴직금", "제조경비", "이자비용", "창고료", "기타비용1", "기타비용2",
+                     "기타비용3", "마진율", "기업이윤"]
+    
+    for field in numeric_fields:
+        if field in data and data[field]:
+            try:
+                data[field] = float(data[field])
+            except ValueError:
+                data[field] = 0.0
+    
+    return data
+
+# 불러오기 버튼
+if st.sidebar.button("📂 지난 견적 불러오기"):
+    st.session_state.show_estimates = True
+
+if st.session_state.get('show_estimates', False):
+    st.subheader("📋 저장된 견적 목록")
+    sheet = get_google_sheet()
+    headers = [
+        "견적명", "규격", "평량", "매수", "환율", "관세비율", "총원가", "제안가",
+        "원단 가격", "기초가격", "정제수", "명진 메인", "명진 소듐", "명진 인산",
+        "SPC팩(파우치)", "영신피엔엘(캡스티커)", "나우텍(캡)", "영신피엔엘(이너스티커)",
+        "지피엠(박스)", "물류비", "노무비", "4대보험+퇴직금", "제조경비", "이자비용",
+        "창고료", "기타비용1_이름", "기타비용2_이름", "기타비용3_이름",
+        "기타비용1", "기타비용2", "기타비용3", "마진율", "기업이윤"
+    ]
+    
+    # 헤더가 없으면 추가
+    if not sheet.row_values(1):
+        sheet.insert_row(headers, 1)
+    
+    # 명시적인 헤더를 사용하여 데이터프레임 생성
+    records = sheet.get_all_records(expected_headers=headers)
+    df_log = pd.DataFrame(records)
+    
+    if not df_log.empty:
+        st.dataframe(df_log)
+        
+        selected_index = st.selectbox("📌 복원할 견적 선택", df_log.index)
+        if st.button("📤 이 견적으로 계산기 채우기"):
+            data = load_estimate(selected_index)
+            if data:
+                # 세션 상태 초기화
+                st.session_state.clear()
+                # 데이터 저장
+                st.session_state.update(data)
+                st.session_state.show_estimates = False
+                st.rerun()
+            else:
+                st.error("견적을 불러오는데 실패했습니다.")
+    else:
+        st.info("저장된 견적이 없습니다.")
+        st.session_state.show_estimates = False
+
+# 기본값 설정
+default_values = {
+    "width": 150,
+    "height": 195,
+    "gsm": 40,
+    "quantity": 120,
+    "exchange_rate": 1500,
+    "percent_applied": 1.2,
+    "margin_rate": 0.1,
+    "corporate_profit": 100.00,
+    "estimate_name": "",
+    "usd_price_per_kg": 1.46,
+    "other_cost1_name": "택배비",
+    "other_cost2_name": "광고선전비",
+    "other_cost3_name": "부가세",
+    "other_cost1_value": 0.00,
+    "other_cost2_value": 0.00,
+    "other_cost3_value": 0.00,
+    "show_estimates": False
+}
+
+# 세션 상태에서 값 가져오기
+for key, default in default_values.items():
+    if key not in st.session_state:
+        st.session_state[key] = default
+
+# 불러온 데이터가 있으면 세션 상태 업데이트
+if '규격' in st.session_state:
+    try:
+        width, height = map(int, st.session_state['규격'].split('x'))
+        st.session_state.update({
+            "width": width,
+            "height": height,
+            "gsm": st.session_state['평량'],
+            "quantity": st.session_state['매수'],
+            "exchange_rate": st.session_state['환율'],
+            "percent_applied": st.session_state['관세비율'],
+            "margin_rate": st.session_state['마진율'],
+            "corporate_profit": st.session_state['기업이윤'],
+            "estimate_name": st.session_state['견적명'],
+            "usd_price_per_kg": st.session_state['기초가격'] / (st.session_state['환율'] * (1 + st.session_state['관세비율'] / 100)),  # 기초가격에서 원단 가격 계산
+            "other_cost1_name": st.session_state['기타비용1_이름'],
+            "other_cost2_name": st.session_state['기타비용2_이름'],
+            "other_cost3_name": st.session_state['기타비용3_이름'],
+            "other_cost1_value": st.session_state['기타비용1'],
+            "other_cost2_value": st.session_state['기타비용2'],
+            "other_cost3_value": st.session_state['기타비용3']
+        })
+    except Exception as e:
+        st.error(f"데이터 복원 중 오류가 발생했습니다: {str(e)}")
 
 with st.form("calc_form"):
     st.subheader("📥 기본 입력값")
     
     # 견적명
-    estimate_name = st.text_input("견적명", value="")
+    estimate_name = st.text_input("견적명", value=st.session_state.estimate_name)
     
     # 원단 정보
     st.markdown("### 원단 정보")
     col1, col2 = st.columns(2)
     with col1:
-        width = st.number_input("원단 가로길이 (mm)", value=150)
-        gsm = st.number_input("평량 (g/㎡)", value=40)
-        usd_price_per_kg = st.number_input("원단 가격 ($/kg)", value=1.46)
+        width = st.number_input("원단 가로길이 (mm)", value=st.session_state.width)
+        gsm = st.number_input("평량 (g/㎡)", value=st.session_state.gsm)
+        usd_price_per_kg = st.number_input("원단 가격 ($/kg)", value=st.session_state.usd_price_per_kg)
     with col2:
-        height = st.number_input("원단 세로길이 (mm)", value=195)
-        quantity = st.number_input("수량 (매수)", value=100)
-        exchange_rate = st.number_input("환율 (₩/$)", value=1500)
-        percent_applied = st.number_input("관세 포함 비율 (%)", value=120) / 100
+        height = st.number_input("원단 세로길이 (mm)", value=st.session_state.height)
+        quantity = st.number_input("수량 (매수)", value=st.session_state.quantity)
+        exchange_rate = st.number_input("환율 (₩/$)", value=st.session_state.exchange_rate)
+        percent_applied = st.number_input("관세 포함 비율 (%)", value=st.session_state.percent_applied)
+        st.session_state.percent_applied = percent_applied
     
     # 원부자재 비용
     st.markdown("### 원부자재 비용")
     submaterials = {
-        "정제수": st.number_input("정제수 (원)", value=1.20, format="%.4f"),
-        "명진 메인": st.number_input("명진 메인 (원)", value=15.41, format="%.4f"),
-        "명진 소듐": st.number_input("명진 소듐 (원)", value=7.40, format="%.4f"),
-        "명진 인산": st.number_input("명진 인산 (원)", value=1.39, format="%.4f"),
-        "SPC팩(파우치)": st.number_input("SPC팩(파우치) (원)", value=56.24, format="%.4f"),
-        "영신피엔엘(캡스티커)": st.number_input("영신피엔엘(캡스티커) (원)", value=19.16, format="%.4f"),
-        "나우텍(캡)": st.number_input("나우텍(캡) (원)", value=33.33, format="%.4f"),
-        "영신피엔엘(이너스티커)": st.number_input("영신피엔엘(이너스티커) (원)", value=18.54, format="%.4f"),
-        "지피엠(박스)": st.number_input("지피엠(박스) (원)", value=77.77, format="%.4f")
+        "정제수": st.number_input("정제수 (원)", value=float(st.session_state.get("정제수", 1.20)), format="%.4f"),
+        "명진 메인": st.number_input("명진 메인 (원)", value=float(st.session_state.get("명진 메인", 15.41)), format="%.4f"),
+        "명진 소듐": st.number_input("명진 소듐 (원)", value=float(st.session_state.get("명진 소듐", 7.40)), format="%.4f"),
+        "명진 인산": st.number_input("명진 인산 (원)", value=float(st.session_state.get("명진 인산", 1.39)), format="%.4f"),
+        "SPC팩(파우치)": st.number_input("SPC팩(파우치) (원)", value=float(st.session_state.get("SPC팩(파우치)", 56.24)), format="%.4f"),
+        "영신피엔엘(캡스티커)": st.number_input("영신피엔엘(캡스티커) (원)", value=float(st.session_state.get("영신피엔엘(캡스티커)", 19.16)), format="%.4f"),
+        "나우텍(캡)": st.number_input("나우텍(캡) (원)", value=float(st.session_state.get("나우텍(캡)", 33.33)), format="%.4f"),
+        "영신피엔엘(이너스티커)": st.number_input("영신피엔엘(이너스티커) (원)", value=float(st.session_state.get("영신피엔엘(이너스티커)", 18.54)), format="%.4f"),
+        "지피엠(박스)": st.number_input("지피엠(박스) (원)", value=float(st.session_state.get("지피엠(박스)", 77.77)), format="%.4f")
     }
     
     # 임가공비
     st.markdown("### 임가공비")
     processing_costs = {
-        "물류비": st.number_input("물류비 (원)", value=28.57, format="%.4f"),
-        "노무비": st.number_input("노무비 (원)", value=23.42, format="%.4f"),
-        "4대보험+퇴직금": st.number_input("4대보험+퇴직금 (원)", value=4.17, format="%.4f"),
-        "제조경비": st.number_input("제조경비 (원)", value=21.26, format="%.4f"),
-        "이자비용": st.number_input("이자비용 (원)", value=17.01, format="%.4f"),
-        "창고료": st.number_input("창고료 (원)", value=5.10, format="%.4f")
+        "물류비": st.number_input("물류비 (원)", value=float(st.session_state.get("물류비", 28.57)), format="%.4f"),
+        "노무비": st.number_input("노무비 (원)", value=float(st.session_state.get("노무비", 23.42)), format="%.4f"),
+        "4대보험+퇴직금": st.number_input("4대보험+퇴직금 (원)", value=float(st.session_state.get("4대보험+퇴직금", 4.17)), format="%.4f"),
+        "제조경비": st.number_input("제조경비 (원)", value=float(st.session_state.get("제조경비", 21.26)), format="%.4f"),
+        "이자비용": st.number_input("이자비용 (원)", value=float(st.session_state.get("이자비용", 17.01)), format="%.4f"),
+        "창고료": st.number_input("창고료 (원)", value=float(st.session_state.get("창고료", 5.10)), format="%.4f")
     }
     
     # 기타 비용
@@ -155,23 +305,23 @@ with st.form("calc_form"):
     col3, col4 = st.columns(2)
     with col3:
         other_cost_names = {
-            "cost1": st.text_input("기타 비용 항목 1", value="택배비"),
-            "cost2": st.text_input("기타 비용 항목 2", value="광고선전비"),
-            "cost3": st.text_input("기타 비용 항목 3", value="부가세")
+            "cost1": st.text_input("기타 비용 항목 1", value=st.session_state.other_cost1_name),
+            "cost2": st.text_input("기타 비용 항목 2", value=st.session_state.other_cost2_name),
+            "cost3": st.text_input("기타 비용 항목 3", value=st.session_state.other_cost3_name)
         }
     with col4:
         other_cost_values = {
-            other_cost_names["cost1"]: st.number_input("금액 1 (원)", value=0.00, format="%.4f"),
-            other_cost_names["cost2"]: st.number_input("금액 2 (원)", value=0.00, format="%.4f"),
-            other_cost_names["cost3"]: st.number_input("금액 3 (원)", value=0.00, format="%.4f")
+            other_cost_names["cost1"]: st.number_input("금액 1 (원)", value=st.session_state.other_cost1_value, format="%.4f"),
+            other_cost_names["cost2"]: st.number_input("금액 2 (원)", value=st.session_state.other_cost2_value, format="%.4f"),
+            other_cost_names["cost3"]: st.number_input("금액 3 (원)", value=st.session_state.other_cost3_value, format="%.4f")
         }
     
     # 마진율과 기업이윤
     col5, col6 = st.columns(2)
     with col5:
-        margin_rate = st.slider("마진율 (%)", 0, 50, 10) / 100
+        margin_rate = st.slider("마진율 (%)", 0, 50, int(st.session_state.margin_rate * 100)) / 100
     with col6:
-        corporate_profit = st.number_input("기업이윤 (원)", value=100.00, format="%.4f")
+        corporate_profit = st.number_input("기업이윤 (원)", value=st.session_state.corporate_profit, format="%.4f")
     
     submitted = st.form_submit_button("📊 계산하기")
 
@@ -186,26 +336,8 @@ if submitted:
         corporate_profit=corporate_profit
     )
 
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
-    client = gspread.authorize(creds)
-    sheet = client.open("Wetwipe Estimates").worksheet("Sheet1")
-    
-    # 헤더 설정
-    headers = [
-        "견적명", "규격", "평량", "매수", "환율", "관세비율", "총원가", "제안가",
-        "원단 가격", "기초가격", "정제수", "명진 메인", "명진 소듐", "명진 인산",
-        "SPC팩(파우치)", "영신피엔엘(캡스티커)", "나우텍(캡)", "영신피엔엘(이너스티커)",
-        "지피엠(박스)", "물류비", "노무비", "4대보험+퇴직금", "제조경비", "이자비용",
-        "창고료", other_cost_names["cost1"], other_cost_names["cost2"], other_cost_names["cost3"],
-        "마진율", "기업이윤"
-    ]
-    
-    if not sheet.row_values(1):
-        sheet.insert_row(headers, 1)
-
-    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    row = {
+    # 견적 데이터 준비
+    estimate_data = {
         "견적명": estimate_name if estimate_name else "자동저장견적",
         "규격": f"{width}x{height}",
         "평량": gsm,
@@ -231,16 +363,19 @@ if submitted:
         "제조경비": result["제조경비"],
         "이자비용": result["이자비용"],
         "창고료": result["창고료"],
-        other_cost_names["cost1"]: result[other_cost_names["cost1"]],
-        other_cost_names["cost2"]: result[other_cost_names["cost2"]],
-        other_cost_names["cost3"]: result[other_cost_names["cost3"]],
+        "기타비용1_이름": other_cost_names["cost1"],
+        "기타비용2_이름": other_cost_names["cost2"],
+        "기타비용3_이름": other_cost_names["cost3"],
+        "기타비용1": result[other_cost_names["cost1"]],
+        "기타비용2": result[other_cost_names["cost2"]],
+        "기타비용3": result[other_cost_names["cost3"]],
         "마진율": margin_rate,
         "기업이윤": corporate_profit
     }
 
-    # 스프레드시트에 저장할 때는 리스트로 변환
-    row_values = [row[header] for header in headers]
-    sheet.append_row(row_values)
+    # 견적 저장
+    save_estimate(estimate_data)
+    st.success("견적이 Google Sheets에 자동 저장되었습니다!")
 
     # 계산 결과를 session_state에 저장
     st.session_state.result = result
@@ -249,13 +384,9 @@ if submitted:
     st.session_state.processing_costs = processing_costs
     st.session_state.other_costs = other_costs
     st.session_state.other_cost_names = other_cost_names
-    st.session_state.row = row
     st.session_state.calculated = True
 
-    st.success("견적이 Google Sheets에 자동 저장되었습니다!")
-
-# 계산 결과 표시
-if 'calculated' in st.session_state and st.session_state.calculated:
+    # 계산 결과 표시
     st.subheader("💡 계산 결과")
     
     # 기본 정보
@@ -293,8 +424,8 @@ if 'calculated' in st.session_state and st.session_state.calculated:
         </div>
         """.format(
             st.session_state.result["제안가(판매가)"],
-            int(st.session_state.row["마진율"] * 100),
-            st.session_state.result["마진({}%)".format(int(st.session_state.row["마진율"] * 100))]
+            int(st.session_state.margin_rate * 100),
+            st.session_state.result["마진({}%)".format(int(st.session_state.margin_rate * 100))]
         ), unsafe_allow_html=True)
 
     # 비용 구성
@@ -481,48 +612,3 @@ if 'calculated' in st.session_state and st.session_state.calculated:
         "비용": "{:,.2f} 원",
         "비율": "{:.2f}%"
     }))
-
-    # 사이드바 복원 기능
-    if st.sidebar.button("📂 지난 견적 불러오기"):
-        st.subheader("📋 저장된 견적 목록 및 복원")
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
-        client = gspread.authorize(creds)
-        sheet = client.open("Wetwipe Estimates").sheet1
-        df_log = pd.DataFrame(sheet.get_all_records())
-        st.dataframe(df_log)
-        
-        selected_row = st.selectbox("📌 복원할 견적 선택 (번호)", df_log.index)
-        if st.button("📤 이 견적으로 계산기 채우기"):
-            selected_data = df_log.loc[selected_row]
-            st.session_state.restore_data = {
-                "견적명": selected_data["견적명"],
-                "규격": selected_data["규격"],
-                "평량": selected_data["평량"],
-                "매수": selected_data["매수"],
-                "환율": selected_data["환율"],
-                "관세비율": selected_data["관세비율"],
-                "마진율": selected_data["마진율"],
-                "기업이윤": selected_data["기업이윤"],
-                "원단 가격": selected_data["원단 가격"],
-                "기초가격": selected_data["기초가격"],
-                "정제수": selected_data["정제수"],
-                "명진 메인": selected_data["명진 메인"],
-                "명진 소듐": selected_data["명진 소듐"],
-                "명진 인산": selected_data["명진 인산"],
-                "SPC팩(파우치)": selected_data["SPC팩(파우치)"],
-                "영신피엔엘(캡스티커)": selected_data["영신피엔엘(캡스티커)"],
-                "나우텍(캡)": selected_data["나우텍(캡)"],
-                "영신피엔엘(이너스티커)": selected_data["영신피엔엘(이너스티커)"],
-                "지피엠(박스)": selected_data["지피엠(박스)"],
-                "물류비": selected_data["물류비"],
-                "노무비": selected_data["노무비"],
-                "4대보험+퇴직금": selected_data["4대보험+퇴직금"],
-                "제조경비": selected_data["제조경비"],
-                "이자비용": selected_data["이자비용"],
-                "창고료": selected_data["창고료"],
-                "기타비용1": selected_data[df_log.columns[-3]],
-                "기타비용2": selected_data[df_log.columns[-2]],
-                "기타비용3": selected_data[df_log.columns[-1]]
-            }
-            st.experimental_rerun()
